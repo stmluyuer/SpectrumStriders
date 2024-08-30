@@ -1,8 +1,11 @@
 
 using System.Collections.Generic;
 using Unity.VisualScripting;
+using UnityEditor.Tilemaps;
 using UnityEngine;
+using UnityEngine.AI;
 using UnityEngine.Tilemaps;
+using UnityEngine.UIElements;
 
 public class PlayerController : MonoBehaviour
 {
@@ -10,14 +13,24 @@ public class PlayerController : MonoBehaviour
     private Rigidbody2D rbody;
     public Tilemap originalTilemap;
     private Tilemap newTilemap;    
-    public Tilemap tilemap; // Tilemap 
+    public Tilemap tilemap; // Tilemap
+    public PhysicsMaterial2D physicsMaterial;
+ 
     private List<(TileBase tile, Vector3Int cellPos)> collidedTiles = new List<(TileBase tile, Vector3Int cellPos)>();
     public float initialspeed = 10f;
     public float temporaryspeed = 10f;
+    public float baseSpeed = 5f; // 基础速度
+    public float accelerationRate = 0.6f; // 每秒加速 60%
+    public float maxSpeedMultiplier = 3f; // 最大速度倍率 300%
+    private float currentSpeedMultiplier = 1f; // 当前速度倍率
+    public float testSpeed = 1f;
+    private bool isOnBlueCube = false;
     public float initialjumpForce = 5f;
     public float temporaryjumpForce = 6f;
     public int maxjump = 2;
     private int jumpCount = 0;
+    private float coyoteTime = 0.2f; // 土狼时间
+    private float coyoteTimeCounter;
     public Color carriedColor;
     private bool isGrounded;
     private bool doublejump = false;
@@ -28,6 +41,8 @@ public class PlayerController : MonoBehaviour
 
     public LayerMask groundLayer; 
 
+    private List<GameObject> tilemapobject = new List<GameObject>();
+
     private Dictionary<Color,(PowerUpType,float)> powerUpEffects;
     private Dictionary<Color, System.Action> applyEffects;
     private Dictionary<Color, System.Action> removeEffects;
@@ -37,7 +52,7 @@ public class PlayerController : MonoBehaviour
         JumpingHeightRatio = 1 << 0, // 0000000001 红色
         DoubleJump = 1 << 1, // 0000000010 橙色
         SpeedBoost = 1 << 2, // 0000000100 黄色
-        Invincible = 1 << 3, // 0000001000 绿色
+        Catapult = 1 << 3, // 0000001000 绿色
         Invinciblea = 1 << 4, // 0000010000 蓝色
         Feather = 1 << 5, // 0000100000 靛色
         Invinciblec = 1 << 6, // 0001000000 紫色
@@ -49,8 +64,25 @@ public class PlayerController : MonoBehaviour
      // 存储当前激活的效果
 
     private PowerUpType activePowerUps = PowerUpType.None; 
+
+    private Dictionary<Color, string> colorTagMapping = new Dictionary<Color, string>()
+    {
+        { Color.red, "RedCube" },
+        { new Color(1.0f, 0.5f, 0.0f), "OrangeCube" },  // 橙色
+        { new Color(1.0f, 1.0f, 0.0f), "YellowCube" },
+        { Color.green, "GreenCube" },
+        { Color.blue, "BlueCube" },
+        { new Color(0.3f, 0.0f, 0.5f), "IndigoCube" },  // 靛色
+        { new Color(0.5f, 0.0f, 1f), "PurpleCube" },  // 紫色
+        { new Color(1.0f, 0.0f, 1.0f), "MagentaCube" }, // 品红 
+        { Color.white, "WhiteCube" },
+        { Color.black, "BlackCube" }
+    };
+
+    
     void Start()
     {
+        AddCollidersToTiles();
         // 创建新的 Tilemap 对象
         GameObject newTilemapGO = new GameObject("Duplicated Tilemap");
         Tilemap newTilemap = newTilemapGO.AddComponent<Tilemap>();
@@ -78,15 +110,15 @@ public class PlayerController : MonoBehaviour
         rbody = GetComponent<Rigidbody2D>();
         // customGravityScale = rbody.gravityScale;
         spriteRenderer = GetComponent<SpriteRenderer>();
-        groundLayer = LayerMask.GetMask("Ground");
-        Debug.Log("" + groundLayer);
+        groundLayer = LayerMask.GetMask("Ground");  
+        Debug.Log("" + groundLayer.value);
 
         powerUpEffects = new Dictionary<Color,(PowerUpType,float)>
         {
             { new Color(1f, 0f, 0f), (PowerUpType.JumpingHeightRatio, 1.42f) }, 
             { new Color(1f, 0.5f, 0f), (PowerUpType.DoubleJump, 0f) }, 
             { new Color(1f, 1f, 0f), (PowerUpType.SpeedBoost, 1.5f) }, 
-            { new Color(0f, 1f, 0f), (PowerUpType.Invincible, 1f) },
+            { new Color(0f, 1f, 0f), (PowerUpType.Catapult, 1f) },
             { new Color(0f, 0f, 1f), (PowerUpType.Invinciblea, 1f) },
             { new Color(0.3f, 0f, 0.5f), (PowerUpType.Feather, 0.3f) },
             { new Color(0.5f, 0f, 1f), (PowerUpType.Invinciblec, 1f) },
@@ -103,7 +135,7 @@ public class PlayerController : MonoBehaviour
             { new Color(0f, 1f, 0f), ApplyGreenEffect },  
             { new Color(0f, 0f, 1f), ApplyBlueEffect },    
             { new Color(0.3f, 0f, 0.5f), ApplyIndigoEffect },  
-            { new Color(0.5f, 0f, 1f), ApplyVioletEffect },  
+            { new Color(0.5f, 0f, 1f), ApplyPurpleEffect },  
             { new Color(1f, 0f, 1f), ApplyMagentaEffect }, 
             { new Color(1f, 1f, 1f), ApplyWhiteEffect },   
             { new Color(0f, 0f, 0f), ApplyBlackEffect }  
@@ -117,11 +149,13 @@ public class PlayerController : MonoBehaviour
             { new Color(0f, 1f, 0f), RemoveGreenEffect },  
             { new Color(0f, 0f, 1f), RemoveBlueEffect },    
             { new Color(0.3f, 0f, 0.5f), RemoveIndigoEffect },  
-            { new Color(0.5f, 0f, 1f), RemoveVioletEffect },  
+            { new Color(0.5f, 0f, 1f), RemovePurpleEffect },  
             { new Color(1f, 0f, 1f), RemoveMagentaEffect }, 
             { new Color(1f, 1f, 1f), RemoveWhiteEffect },   
             { new Color(0f, 0f, 0f), RemoveBlackEffect }  
         };
+        
+        
 
     }
     void LogEffectStatus(Color color, string status)
@@ -142,11 +176,12 @@ public class PlayerController : MonoBehaviour
         else
             return "Unknown Color";
     }
+    
 
     void FixedUpdate()
     {
         // Debug.Log("1111");
-        // 获取物体的位置
+        // 获取角色物体的位置
         Vector2 currentPosition = transform.position;
 
         // 定义检测区域的半径
@@ -158,7 +193,7 @@ public class PlayerController : MonoBehaviour
         foreach (var collider in colliders)
         {
             // 检查碰撞到的物体是否是 Tilemap
-            if (collider.gameObject == tilemap.gameObject)
+            if (((1 << collider.gameObject.layer) & groundLayer) != 0)
             {
                 // 获取碰撞点
                 Vector2 hitPoint = collider.ClosestPoint(currentPosition);
@@ -170,7 +205,8 @@ public class PlayerController : MonoBehaviour
                 // Debug.Log("碰撞点" + offsetPosition);
                 // 获取 Tilemap 中的单元格位置
                 Vector3Int cellPos = tilemap.WorldToCell(offsetPosition);
-
+                // collider.sharedMaterial = physicsMaterial;
+                // print(collider.sharedMaterial);
                 // 获取单元格中的 Tile
                 TileBase tile = tilemap.GetTile(cellPos);
                 if (tile != null)
@@ -184,23 +220,61 @@ public class PlayerController : MonoBehaviour
                     // 修改 Tile 的颜色
                     // tilemap.SetColor(cellPos, Color.red);
                     // spriteTile.color = new Color(1f,1f,1f);
-                        // print("修改了颜色"+ cellPos+tilemap.GetColor(cellPos));
+                        // print("修改了颜色" +" Tile:" + tile +" cellpos坐标："+ cellPos+"cellpos颜色："+tilemap.GetColor(cellPos));
                         // 刷新 Tile 的显示
                     tilemap.RefreshTile(cellPos);
                 }
-                // 打印检测信息
-                // Debug.Log("Tile: " + tile);
-                // Debug.Log("Cell Position: " + cellPos);
             }
         }
     }
     void Update()
     {
-        // 获取水平移动输入
-        float move = Input.GetAxis("Horizontal");
-        if (move != 0)
-        rbody.velocity = new Vector2(move * temporaryspeed, rbody.velocity.y);
+        {
+            if (isGrounded)
+            {
+                coyoteTimeCounter = coyoteTime; //进入地面重置计时
+            }
+            else
+            {
+                coyoteTimeCounter -= Time.deltaTime; // 离开地面开始计时
+            }
+            // 获取水平移动输入
+            float move = Input.GetAxis("Horizontal");
+            if (isOnBlueCube && move != 0)
+            {
+                // 计算加速
+                currentSpeedMultiplier += accelerationRate * Time.deltaTime;
+                currentSpeedMultiplier = Mathf.Min(currentSpeedMultiplier, maxSpeedMultiplier);
+                testSpeed = temporaryspeed * currentSpeedMultiplier; // 测试
+                // print(testSpeed +"加速度倍率"+currentSpeedMultiplier);
+                rbody.velocity = new Vector2(move * testSpeed, rbody.velocity.y);
+            }
+            else
+            {
+                // 如果不在蓝色方块上或没有移动，重置速度倍率
+                currentSpeedMultiplier = 1f;
+                rbody.velocity = new Vector2(move * temporaryspeed * currentSpeedMultiplier, rbody.velocity.y);
+            }
+            // rbody.velocity = new Vector2(move * temporaryspeed * currentSpeedMultiplier, rbody.velocity.y);
+        }
         
+
+        if (Input.GetButtonDown("Jump") && (coyoteTimeCounter > 0  || (jumpCount < (maxjump - 1) && doublejump)))
+        {
+            // Vector2 gravityDirection = Physics2D.gravity.normalized; 
+            // 获取当前重力方向 (考虑 gravityScale)
+            Vector2 gravityDirection = Vector2.down * Mathf.Sign(rbody.gravityScale);
+            Debug.Log("重力"+rbody.gravityScale+gravityDirection);
+            // 根据重力方向调整跳跃力方向
+            rbody.velocity = new Vector2(rbody.velocity.x, temporaryjumpForce * -gravityDirection.y); 
+
+            jumpCount++;
+        }
+        if (isGrounded)
+        {
+            jumpCount = 0;
+        }
+
         // 使用 foreach 循环遍历 collidedTiles 列表
         foreach ((TileBase tile, Vector3Int cellPos) in collidedTiles)
         {   
@@ -221,33 +295,14 @@ public class PlayerController : MonoBehaviour
             }
         }
         
-        if (Input.GetButtonDown("Jump") && (isGrounded || (jumpCount < (maxjump - 1) && doublejump)))
-        {
-            // Vector2 gravityDirection = Physics2D.gravity.normalized; 
-            // 获取当前重力方向 (考虑 gravityScale)
-            Vector2 gravityDirection = Vector2.down * Mathf.Sign(rbody.gravityScale);
-            Debug.Log("重力"+rbody.gravityScale+gravityDirection);
-            // 根据重力方向调整跳跃力方向
-            rbody.velocity = new Vector2(rbody.velocity.x, temporaryjumpForce * -gravityDirection.y); 
-
-            jumpCount++;
-        }
-        if (isGrounded)
-        {
-            jumpCount = 0;
-        }
-
+        
     }
 
-    public void ChangeColor(Color newColor)
-    {   
-        spriteRenderer.color = newColor;
-    }
 
     Vector3Int FindClosestPoint(List<Vector3Int> magentaTilePositions)
     {
         Vector3Int closestPoint = magentaTilePositions[0]; // 初始化为 第一个
-        float shortestDistance = Mathf.Infinity; // 初始化为正无穷，确保第一个 Tile 距离会被比较
+        float shortestDistance = Mathf.Infinity; // 确保第一个 Tile 距离会被比较
 
         foreach (Vector3Int point in magentaTilePositions)
         {
@@ -268,7 +323,8 @@ public class PlayerController : MonoBehaviour
     private void OnCollisionEnter2D(Collision2D collision)
     {
         // Debug.Log(isGrounded);
-        if (collision.gameObject.CompareTag("Ground"))
+        if (((1 << collision.gameObject.layer) & groundLayer) != 0)
+        // if (collision.gameObject.CompareTag("Ground"))
         {
             isGrounded = true;
         }
@@ -276,7 +332,8 @@ public class PlayerController : MonoBehaviour
     private void OnCollisionExit2D(Collision2D collision)
     {
         // Debug.Log(isGrounded);
-        if (collision.gameObject.CompareTag("Ground"))
+        if (((1 << collision.gameObject.layer) & groundLayer) != 0)
+        // if (collision.gameObject.CompareTag("Ground"))
         {
             isGrounded = false;
         }
@@ -377,6 +434,7 @@ public class PlayerController : MonoBehaviour
             {
                 applyEffects[effect.Key]();
                 activePowerUps |= effect.Value.Item1;
+                print(tileColor);
                 UpdateSpriteColor(tileColor);
             }
             else if (effect.Key != tileColor && (activePowerUps & effect.Value.Item1) != 0)
@@ -424,55 +482,89 @@ public class PlayerController : MonoBehaviour
     }
     void ApplyGreenEffect()
     {
-        LogEffectStatus(new Color(0f, 0f, 0f), "Enter");
+        LogEffectStatus(new Color(0f, 1f, 0f), "Enter");
+        // print(collidedTiles.Count);
+        foreach ((TileBase tile, Vector3Int cellPos) in collidedTiles)
+        {
+            // 获取世界坐标
+            Vector3 worldPosition = tilemap.CellToWorld(cellPos);
+            // 获取指定位置的Collider
+            Collider2D collider = Physics2D.OverlapPoint(worldPosition);
+            
+            // if (collider != null)
+            // {
+            //     // 为该Collider设置物理材质
+            //     collider.sharedMaterial = physicsMaterial;
+            // }
+        }
+        
         // rbody.gravityScale *= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
     void RemoveGreenEffect()
     {
-        LogEffectStatus(new Color(0f, 0f, 0f), "Leave");
+        LogEffectStatus(new Color(0f, 1f, 0f), "Leave");
         // rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
 
     void ApplyBlueEffect()
     {
         LogEffectStatus(new Color(0f, 0f, 0f), "Enter");
+        isOnBlueCube = true ;
         // rbody.gravityScale *= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
     void RemoveBlueEffect()
     {
         LogEffectStatus(new Color(0f, 0f, 0f), "Leave");
+        isOnBlueCube = false ;
         // rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
     void ApplyIndigoEffect()
     {
         LogEffectStatus(new Color(0.3f, 0f, 0.5f), "Enter");
-        // rbody.gravityScale *= powerUpEffects[new Color(0.3f, 0f, 0.5f)].Item2;
+        rbody.gravityScale *= powerUpEffects[new Color(0.3f, 0f, 0.5f)].Item2;
     }
 
     void RemoveIndigoEffect()
     {
         LogEffectStatus(new Color(0.3f, 0f, 0.5f), "Leave");
-        // rbody.gravityScale /= powerUpEffects[new Color(0.3f, 0f, 0.5f)].Item2;
+        rbody.gravityScale /= powerUpEffects[new Color(0.3f, 0f, 0.5f)].Item2;
     }
 
-    void ApplyVioletEffect()
+    void ApplyPurpleEffect() 
     {
-        LogEffectStatus(new Color(0f, 0f, 0f), "Enter");
+        List<GameObject> gameObjects = new List<GameObject>();
+        LogEffectStatus(new Color(0.5f, 0f, 1f), "Enter");
+        foreach (var gameObject in tilemapobject)
+        {
+            if (gameObject.tag == "PurpleCube")
+            {
+                gameObject.GetComponent<BoxCollider2D>().isTrigger = true;
+            }
+        }
         // rbody.gravityScale *= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
 
-    void RemoveVioletEffect()
+    void RemovePurpleEffect()
     {
-        LogEffectStatus(new Color(0f, 0f, 0f), "Leave");
+        LogEffectStatus(new Color(0.5f, 0f, 1f), "Leave");
+        List<GameObject> gameObjects = new List<GameObject>();
+        LogEffectStatus(new Color(0.5f, 0f, 1f), "Enter");
+        foreach (var gameObject in tilemapobject)
+        {
+            if (gameObject.tag == "PurpleCube")
+            {
+                gameObject.GetComponent<BoxCollider2D>().isTrigger = false;
+            }
+        }
         // rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
-
+    
     void ApplyMagentaEffect()
     {
         LogEffectStatus(new Color(1f, 0f, 1f), "Enter");
         tilemap.CompressBounds();
         BoundsInt area = tilemap.cellBounds;
-        print(tilemap.cellBounds);
+        // print(tilemap.cellBounds);
         TileBase[] tileArray = tilemap.GetTilesBlock(area);
         int tileArrayLength = tileArray.Length; 
         print(tileArrayLength);
@@ -497,6 +589,7 @@ public class PlayerController : MonoBehaviour
             }
         }
         print("传送之前的坐标"+rbody.position);
+        print("完成");
         Vector3Int positioshortestint = FindClosestPoint(magentaTilePositions);
         if (positioshortestint != magentaTilePositions[0])
             print(positioshortestint);
@@ -539,13 +632,80 @@ public class PlayerController : MonoBehaviour
         rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
 
-
     void UpdateSpriteColor(Color tileColor)
     {
         if (spriteRenderer.color != tileColor)
         {
             spriteRenderer.color = tileColor;
             // Debug.Log("color:" + spriteRenderer.color);
+        }
+    }
+
+    void AddCollidersToTiles()
+    {
+        // 获取Tilemap的所有边界
+        BoundsInt bounds = tilemap.cellBounds;
+
+        // 遍历Tilemap中的所有位置
+        for (int x = bounds.xMin; x < bounds.xMax; x++)
+        {
+            for (int y = bounds.yMin; y < bounds.yMax; y++)
+            {
+                Vector3Int cellPosition = new Vector3Int(x, y, 0);
+                TileBase tile = tilemap.GetTile(cellPosition);
+
+                if (tile != null) // 如果Tile不是空白
+                {
+                    // 创建一个新的GameObject来附加BoxCollider
+                    GameObject tileObject = new GameObject("Tile_" + x + "_" + y);
+                    tileObject.transform.position = tilemap.CellToWorld(cellPosition) + tilemap.tileAnchor;
+                    string colortag = GetColorTag(cellPosition);
+                    tileObject.tag = colortag;
+                    tileObject.layer = 6;
+                    // 添加BoxCollider2D组件
+                    BoxCollider2D boxCollider = tileObject.AddComponent<BoxCollider2D>();
+                    boxCollider.size = tilemap.cellSize;
+                    // Color tileColor = tilemap.GetColor(cellPosition);
+                    // 检查Tile的颜色，如果是绿色则添加PhysicsMaterial2D
+                    if (IsTileGreen(cellPosition))
+                    {
+                        boxCollider.sharedMaterial = physicsMaterial;
+                    }
+                    // 将新创建的GameObject作为Tilemap的子对象
+                    tilemapobject.Add(tileObject);
+                    tileObject.transform.parent = tilemap.transform;
+                }
+            }
+        }
+        print("tile生成的总数量 :" + tilemapobject.Count);
+    }
+
+    bool IsTileGreen(Vector3Int cellPosition)
+    {
+        // 获取Tile的Sprite
+        if (cellPosition != null)
+        {
+            // 获取Sprite的颜色（假设Sprite的颜色是单一颜色）
+            Color color  = tilemap.GetColor(cellPosition);
+            // 判断颜色是否为绿色（这里假设绿色的RGB值为(0, 1, 0)）
+            return color == Color.green;
+        }
+
+        return false;
+    }
+
+    private string GetColorTag(Vector3Int cellPosition)
+    {
+        Color tileColor = tilemap.GetColor(cellPosition);
+
+        // 尝试在字典中查找颜色对应的标签
+        if (colorTagMapping.TryGetValue(tileColor, out string colorTag))
+        {
+            return colorTag;
+        }
+        else
+        {
+            return "UnknownColor"; // 如果找不到对应的颜色标签，则返回默认标签
         }
     }
 }
