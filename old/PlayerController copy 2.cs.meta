@@ -1,11 +1,9 @@
 fileFormatVersion: 2
-guid: 23b85fefd11a47248ae3631052cad459
+guid: 50f08d70038d9564fa64daae1bae7f6d
 MonoImporter:
   externalObjects: {}
   serializedVersion: 2
-  defaultReferences:
-  - tilemap: {instanceID: 0}
-  - physicsMaterial: {instanceID: 0}
+  defaultReferences: []
   executionOrder: 0
   icon: {instanceID: 0}
   userData: 

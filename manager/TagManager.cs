@@ -7,16 +7,16 @@ public class TagManager : EditorWindow
     // 颜色到标签的映射
     private static Dictionary<Color, string> colorTagMapping = new Dictionary<Color, string>()
     {
-        { Color.red, "RedCube" },
+        { new Color(1f, 0f, 0f), "RedCube" },
         { new Color(1.0f, 0.5f, 0.0f), "OrangeCube" },  // 橙色
         { new Color(1.0f, 1f, 0.0f), "YellowCube" },
-        { Color.green, "GreenCube" },
-        { Color.blue, "BlueCube" },
+        { new Color(0.0f, 1f, 0.0f), "GreenCube" },
+        { new Color(0.0f, 0.0f, 1.0f), "BlueCube" },
         { new Color(0.0f, 0.5f, 1.0f), "IndigoCube" },  // 靛色
-        { new Color(0.5f, 0.0f, 0.5f), "PurpleCube" },  // 紫色
+        { new Color(0.5f, 0.0f, 1f), "PurpleCube" },  // 紫色
         { new Color(1.0f, 0.0f, 1.0f), "MagentaCube" }, // 品红
-        { Color.white, "WhiteCube" },
-        { Color.black, "BlackCube" }
+        { new Color(1.0f, 1.0f, 1.0f), "WhiteCube" },
+        { new Color(0.0f, 0.0f, 0.0f), "BlackCube" }
     };
 
     // 在Unity编辑器中添加一个菜单项
