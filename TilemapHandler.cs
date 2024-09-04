@@ -1,8 +1,9 @@
 using System.Collections.Generic;
+using Mirror;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 
-public class TilemapHandler : MonoBehaviour
+public class TilemapHandler : NetworkBehaviour
 {
     public Tilemap tilemap; // Tilemap
     public List<(TileBase tile, Vector3Int cellPos)> collidedTiles = new List<(TileBase tile, Vector3Int cellPos)>();

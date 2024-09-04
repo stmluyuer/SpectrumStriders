@@ -1,10 +1,9 @@
-using System;
 using System.Collections.Generic;
-using JetBrains.Annotations;
+using Mirror;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 
-public class PowerUpManager : MonoBehaviour
+public class PowerUpManager : NetworkBehaviour
 {
     public PlayerData playerData;
     private SpriteRenderer spriteRenderer;
@@ -13,14 +12,16 @@ public class PowerUpManager : MonoBehaviour
     public PhysicsMaterial2D physicsMaterial;
     public float temporaryspeed = 10f;
     public bool isOnBlueCube = false;
+    public bool isOnMagentaCube = false;
     public float temporaryjumpForce = 6f;
     public bool doublejump;
     public float customGravityScale = 1f; // 重力
-    public LayerMask groundLayer; 
+    public Vector2 positioshortest;
+    public LayerMask groundLayer;
     private TilemapHandler tilemapHandler;
-    private List<(GameObject,Vector3Int)> tilemapobject = new List<(GameObject,Vector3Int)>();
+    private List<(GameObject, Vector3Int)> tilemapobject = new List<(GameObject, Vector3Int)>();
 
-    private Dictionary<Color,(PowerUpType,float)> powerUpEffects;
+    private Dictionary<Color, (PowerUpType, float)> powerUpEffects;
     private Dictionary<Color, System.Action> applyEffects;
     private Dictionary<Color, System.Action> removeEffects;
     public enum PowerUpType
@@ -32,15 +33,15 @@ public class PowerUpManager : MonoBehaviour
         Catapult = 1 << 3, // 0000001000 绿色
         Invinciblea = 1 << 4, // 0000010000 蓝色
         Feather = 1 << 5, // 0000100000 靛色
-        Invinciblec = 1 << 6, // 0001000000 紫色
+        Through = 1 << 6, // 0001000000 紫色
         Transfer = 1 << 7, // 0010000000 品红
         GravityInversion = 1 << 8, // 0100000000 白色
         DeGravityInversion = 1 << 9, // 1000000000 黑色
         Invincibleg = 1 << 10, // 100000000000
     }
-     // 存储当前激活的效果
+    // 存储当前激活的效果
 
-    private PowerUpType activePowerUps = PowerUpType.None; 
+    private PowerUpType activePowerUps = PowerUpType.None;
 
     private Dictionary<Color, string> colorTagMapping = new Dictionary<Color, string>()
     {
@@ -55,7 +56,8 @@ public class PowerUpManager : MonoBehaviour
         { Color.white, "WhiteCube" },
         { Color.black, "BlackCube" }
     };
-
+    private bool isThroughActive;
+    private bool isOnPurpleCube;
 
     public void Initialize(Tilemap Tilemap)
     {
@@ -66,67 +68,79 @@ public class PowerUpManager : MonoBehaviour
         rbody = GetComponent<Rigidbody2D>();
         // customGravityScale = rbody.gravityScale;
         spriteRenderer = GetComponent<SpriteRenderer>();
-        groundLayer = LayerMask.GetMask("Ground");  
+        groundLayer = LayerMask.GetMask("Ground");
         Debug.Log("" + groundLayer.value);
         physicsMaterial = Resources.Load<PhysicsMaterial2D>("Material/BouncyMaterial");
         print(physicsMaterial);
-        powerUpEffects = new Dictionary<Color,(PowerUpType,float)>
+        powerUpEffects = new Dictionary<Color, (PowerUpType, float)>
         {
-            { new Color(1f, 0f, 0f), (PowerUpType.JumpingHeightRatio, 1.42f) }, 
-            { new Color(1f, 0.5f, 0f), (PowerUpType.DoubleJump, 0f) }, 
-            { new Color(1f, 1f, 0f), (PowerUpType.SpeedBoost, 1.5f) }, 
+            { new Color(1f, 0f, 0f), (PowerUpType.JumpingHeightRatio, 1.42f) },
+            { new Color(1f, 0.5f, 0f), (PowerUpType.DoubleJump, 0f) },
+            { new Color(1f, 1f, 0f), (PowerUpType.SpeedBoost, 1.5f) },
             { new Color(0f, 1f, 0f), (PowerUpType.Catapult, 1f) },
             { new Color(0f, 0f, 1f), (PowerUpType.Invinciblea, 1f) },
             { new Color(0.3f, 0f, 0.5f), (PowerUpType.Feather, 0.3f) },
-            { new Color(0.5f, 0f, 1f), (PowerUpType.Invinciblec, 1f) },
-            { new Color(1f, 0f, 1f), (PowerUpType.Transfer, 1f) }, 
-            { new Color(1f, 1f, 1f), (PowerUpType.GravityInversion, 1f) }, 
-            { new Color(0f, 0f, 0f), (PowerUpType.DeGravityInversion, -1f) } 
+            { new Color(0.5f, 0f, 1f), (PowerUpType.Through, 1f) },
+            { new Color(1f, 0f, 1f), (PowerUpType.Transfer, 1f) },
+            { new Color(1f, 1f, 1f), (PowerUpType.GravityInversion, 1f) },
+            { new Color(0f, 0f, 0f), (PowerUpType.DeGravityInversion, -1f) }
         };
         applyEffects = new Dictionary<Color, System.Action>
         {
             { new Color(1f, 0f, 0f), ApplyRedEffect },
             { new Color(1f, 0.5f, 0f), ApplyOrangeEffect },
             { new Color(1f, 1f, 0f), ApplyYellowEffect },
-            { new Color(0f, 1f, 0f), ApplyGreenEffect },  
-            { new Color(0f, 0f, 1f), ApplyBlueEffect },    
-            { new Color(0.3f, 0f, 0.5f), ApplyIndigoEffect },  
-            { new Color(0.5f, 0f, 1f), ApplyPurpleEffect },  
-            { new Color(1f, 0f, 1f), ApplyMagentaEffect }, 
-            { new Color(1f, 1f, 1f), ApplyWhiteEffect },   
-            { new Color(0f, 0f, 0f), ApplyBlackEffect }  
+            { new Color(0f, 1f, 0f), ApplyGreenEffect },
+            { new Color(0f, 0f, 1f), ApplyBlueEffect },
+            { new Color(0.3f, 0f, 0.5f), ApplyIndigoEffect },
+            { new Color(0.5f, 0f, 1f), ApplyPurpleEffect },
+            { new Color(1f, 0f, 1f), ApplyMagentaEffect },
+            { new Color(1f, 1f, 1f), ApplyWhiteEffect },
+            { new Color(0f, 0f, 0f), ApplyBlackEffect }
         };
         removeEffects = new Dictionary<Color, System.Action>
         {
             { new Color(1f, 0f, 0f), RemoveRedEffect },
             { new Color(1f, 0.5f, 0f), RemoveOrangeEffect },
             { new Color(1f, 1f, 0f), RemoveYellowEffect },
-            { new Color(0f, 1f, 0f), RemoveGreenEffect },  
-            { new Color(0f, 0f, 1f), RemoveBlueEffect },    
-            { new Color(0.3f, 0f, 0.5f), RemoveIndigoEffect },  
-            { new Color(0.5f, 0f, 1f), RemovePurpleEffect },  
-            { new Color(1f, 0f, 1f), RemoveMagentaEffect }, 
-            { new Color(1f, 1f, 1f), RemoveWhiteEffect },   
-            { new Color(0f, 0f, 0f), RemoveBlackEffect }  
+            { new Color(0f, 1f, 0f), RemoveGreenEffect },
+            { new Color(0f, 0f, 1f), RemoveBlueEffect },
+            { new Color(0.3f, 0f, 0.5f), RemoveIndigoEffect },
+            { new Color(0.5f, 0f, 1f), RemovePurpleEffect },
+            { new Color(1f, 0f, 1f), RemoveMagentaEffect },
+            { new Color(1f, 1f, 1f), RemoveWhiteEffect },
+            { new Color(0f, 0f, 0f), RemoveBlackEffect }
         };
 
         AddCollidersToTiles();
     }
-    
+
     public void ApplyTileEffect(Color tileColor)
     {
+        // 检查当前是否在处理“Through”效果
+        // 获取角色物体的位置
+        Vector2 currentPosition = transform.position;
+        // 定义检测区域的半径
+        float detectionRadius = 0.35f; 
+        Collider2D[] colliders = Physics2D.OverlapCircleAll(currentPosition, detectionRadius);
+        foreach (var collider in colliders)
+        // 检查碰撞到的物体是否是 Tilemap
+            if (collider.gameObject.tag == "PurpleCube" && spriteRenderer.color == new Color(0.5f, 0f, 1f))
+            {
+                return;
+            }
+
         foreach (var effect in powerUpEffects)
         {
             if (effect.Key == tileColor && (activePowerUps & effect.Value.Item1) == 0)
             {
                 applyEffects[effect.Key]();
                 activePowerUps |= effect.Value.Item1;
-                print(tileColor);
+                // print(tileColor);
                 UpdateSpriteColor(tileColor);
             }
             else if (effect.Key != tileColor && (activePowerUps & effect.Value.Item1) != 0)
             {
-                print("test");
                 removeEffects[effect.Key]();
                 activePowerUps &= ~effect.Value.Item1;
             }
@@ -147,7 +161,7 @@ public class PowerUpManager : MonoBehaviour
 
     void LogEffectStatus(Color color, string status)
     {
-        string colorName = GetColorName(color); 
+        string colorName = GetColorName(color);
         // Debug.Log($"{colorName} {status}");
     }
 
@@ -191,19 +205,18 @@ public class PowerUpManager : MonoBehaviour
         LogEffectStatus(new Color(0f, 1f, 0f), "Enter");
         foreach ((TileBase tile, Vector3Int cellPos) in tilemapHandler.collidedTiles)
         {
-            Debug.Log("test collider");
             // 获取世界坐标
             Vector3 worldPosition = tilemap.CellToWorld(cellPos);
             // 获取指定位置的Collider
             Collider2D collider = Physics2D.OverlapPoint(worldPosition);
-            
+
             // if (collider != null)
             // {
             //     // 为该Collider设置物理材质
             //     collider.sharedMaterial = physicsMaterial;
             // }
         }
-        
+
         // rbody.gravityScale *= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
     void RemoveGreenEffect()
@@ -215,13 +228,13 @@ public class PowerUpManager : MonoBehaviour
     void ApplyBlueEffect()
     {
         LogEffectStatus(new Color(0f, 0f, 0f), "Enter");
-        isOnBlueCube = true ;
+        isOnBlueCube = true;
         // rbody.gravityScale *= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
     void RemoveBlueEffect()
     {
         LogEffectStatus(new Color(0f, 0f, 0f), "Leave");
-        isOnBlueCube = false ;
+        isOnBlueCube = false;
         // rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
     void ApplyIndigoEffect()
@@ -236,20 +249,20 @@ public class PowerUpManager : MonoBehaviour
         rbody.gravityScale /= powerUpEffects[new Color(0.3f, 0f, 0.5f)].Item2;
     }
 
-    void ApplyPurpleEffect() 
+    void ApplyPurpleEffect()
     {
-        List<GameObject> gameObjects = new List<GameObject>();
+        isOnPurpleCube = true;
         LogEffectStatus(new Color(0.5f, 0f, 1f), "Enter");
-        foreach (var (gameObject,cellPosition) in tilemapobject)
+        foreach (var (gameObject, cellPosition) in tilemapobject)
         {
             if (gameObject.tag == "PurpleCube")
             {
                 // gameObject.GetComponent<BoxCollider2D>().isTrigger = true;
                 Color cellcolor = tilemap.GetColor(cellPosition);
-                cellcolor = new Color(cellcolor.r, cellcolor.g, cellcolor.b, 0.1f); 
+                cellcolor = new Color(cellcolor.r, cellcolor.g, cellcolor.b, 0.1f);
 
                 // 将新的颜色设置到 Tilemap 的指定位置
-                tilemap.SetColor(cellPosition, cellcolor); 
+                tilemap.SetColor(cellPosition, cellcolor);
             }
         }
         // rbody.gravityScale *= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
@@ -257,39 +270,41 @@ public class PowerUpManager : MonoBehaviour
 
     void RemovePurpleEffect()
     {
+        isOnPurpleCube = false;
         LogEffectStatus(new Color(0.5f, 0f, 1f), "Leave");
         List<GameObject> gameObjects = new List<GameObject>();
         LogEffectStatus(new Color(0.5f, 0f, 1f), "Enter");
-        foreach (var (gameObject,cellPosition) in tilemapobject)
+        foreach (var (gameObject, cellPosition) in tilemapobject)
         {
             if (gameObject.tag == "PurpleCube")
             {
                 // gameObject.GetComponent<BoxCollider2D>().isTrigger = false;
-                
+
             }
         }
         // rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
-    
+
     void ApplyMagentaEffect()
     {
         LogEffectStatus(new Color(1f, 0f, 1f), "Enter");
+        isOnMagentaCube = true;
         tilemap.CompressBounds();
         BoundsInt area = tilemap.cellBounds;
         // print(tilemap.cellBounds);
         TileBase[] tileArray = tilemap.GetTilesBlock(area);
-        int tileArrayLength = tileArray.Length; 
+        int tileArrayLength = tileArray.Length;
         print(tileArrayLength);
         List<TileBase> magentaTiles = new List<TileBase>();
         List<Vector3Int> magentaTilePositions = new List<Vector3Int>();
         // 遍历所有 Tile
-        for (int i = 0; i < tileArrayLength; i++ )
+        for (int i = 0; i < tileArrayLength; i++)
         {
             if (tileArray[i] != null) // 确保 Tile 不是空的
             {
                 // 获取 Tile 的颜色
                 Color tileColor = tilemap.GetColor(area.position + new Vector3Int(i % area.size.x, i / area.size.x, 0));
-                
+
                 // 判断颜色
                 if (tileColor == new Color(1f, 0f, 1f))
                 {
@@ -300,13 +315,12 @@ public class PowerUpManager : MonoBehaviour
                 }
             }
         }
-        print("传送之前的坐标"+rbody.position);
-        print("完成");
+        print("传送之前的坐标" + rbody.position);
         Vector3Int positioshortestint = FindClosestPoint(magentaTilePositions);
         if (positioshortestint != magentaTilePositions[0])
-            print(positioshortestint);
-            Vector2 positioshortest = new Vector2(positioshortestint.x + 0.5f, positioshortestint.y + 1.2f);
-            rbody.position = positioshortest;
+        print(positioshortestint);
+        positioshortest = new Vector2(positioshortestint.x + 0.5f, positioshortestint.y + 1.2f);
+        // rbody.position = positioshortest;
     }
 
     // 找到最近传送点函数
@@ -334,31 +348,31 @@ public class PowerUpManager : MonoBehaviour
     void RemoveMagentaEffect()
     {
         LogEffectStatus(new Color(1f, 0f, 1f), "Leave");
-        rbody.gravityScale /= powerUpEffects[new Color(1f, 0f, 1f)].Item2;
+        isOnMagentaCube = false;
     }
 
-    void ApplyWhiteEffect()     
+    void ApplyWhiteEffect()
     {
         LogEffectStatus(new Color(1f, 1f, 1f), "Enter");
-        rbody.gravityScale *= powerUpEffects[new Color(1f, 1f, 1f)].Item2;
+        rbody.gravityScale = powerUpEffects[new Color(1f, 1f, 1f)].Item2;
     }
 
     void RemoveWhiteEffect()
     {
         LogEffectStatus(new Color(1f, 1f, 1f), "Leave");
-        rbody.gravityScale /= powerUpEffects[new Color(1f, 1f, 1f)].Item2;
+        // rbody.gravityScale /= powerUpEffects[new Color(1f, 1f, 1f)].Item2;
     }
 
     void ApplyBlackEffect()
     {
         LogEffectStatus(new Color(0f, 0f, 0f), "Enter");
-        rbody.gravityScale *= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
+        rbody.gravityScale = powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
 
     void RemoveBlackEffect()
     {
         LogEffectStatus(new Color(0f, 0f, 0f), "Leave");
-        rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
+        // rbody.gravityScale /= powerUpEffects[new Color(0f, 0f, 0f)].Item2;
     }
 
     void UpdateSpriteColor(Color tileColor)
@@ -391,7 +405,7 @@ public class PowerUpManager : MonoBehaviour
                     string colortag = GetColorTag(cellPosition);
                     tileObject.tag = colortag;
                     tileObject.layer = 6;
-                    
+
                     // 添加BoxCollider2D组件
                     BoxCollider2D boxCollider = tileObject.AddComponent<BoxCollider2D>();
                     boxCollider.size = tilemap.cellSize;
@@ -406,7 +420,7 @@ public class PowerUpManager : MonoBehaviour
                         boxCollider.sharedMaterial = physicsMaterial;
                     }
                     // 将新创建的GameObject作为Tilemap的子对象
-                    tilemapobject.Add((tileObject,cellPosition));
+                    tilemapobject.Add((tileObject, cellPosition));
                     tileObject.transform.parent = tilemap.transform;
                 }
             }
@@ -420,7 +434,7 @@ public class PowerUpManager : MonoBehaviour
         if (cellPosition != null)
         {
             // 获取Sprite的颜色（假设Sprite的颜色是单一颜色）
-            Color color  = tilemap.GetColor(cellPosition);
+            Color color = tilemap.GetColor(cellPosition);
             // 判断颜色是否为绿色（这里假设绿色的RGB值为(0, 1, 0)）
             return color == Color.green;
         }
