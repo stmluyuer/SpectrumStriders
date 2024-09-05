@@ -153,10 +153,9 @@ public class PlayerMovement : NetworkBehaviour
         }
         else
         {    
-            rayDirection = Vector2.up; // 向下发射射线
+            rayDirection = Vector2.up; // 向上发射射线，重力为负
         }
-        // 定义射线的长度
-        float rayLength = 0.4f; // 根据需要调整射线长度
+        float rayLength = 0.4f;
         Debug.DrawRay(rayOrigin, rayDirection  * rayLength, Color.red);
         return Physics2D.Raycast(rayOrigin, rayDirection , rayLength, playerData.GroundLayer); 
     }
